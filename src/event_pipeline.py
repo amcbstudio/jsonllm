@@ -37,6 +37,8 @@ from jsonllm_kernel.contracts import (
 )
 from jsonllm_kernel.module_api import ModuleContext
 from jsonllm_kernel.module_loader import ModuleLoadError, ModuleRegistry, load_module_registry
+from jsonllm_kernel.conformance import run_module_conformance
+from jsonllm_kernel.scaffold import init_module_scaffold
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = ROOT / "catalog" / "allowed-actions.json"
@@ -282,6 +284,47 @@ def cmd_list_modules(args: argparse.Namespace) -> int:
     ]
     print(json.dumps(data, ensure_ascii=True, indent=2))
     return 0
+
+
+def cmd_init_module(args: argparse.Namespace) -> int:
+    module_id = args.module_id.strip()
+    if not module_id:
+        print(json.dumps({"created": False, "error": "module_id cannot be empty"}, ensure_ascii=True))
+        return 1
+
+    try:
+        written = init_module_scaffold(
+            modules_dir=MODULES_PATH,
+            module_id=module_id,
+            force=bool(args.force),
+        )
+    except Exception as exc:
+        print(json.dumps({"created": False, "error": str(exc)}, ensure_ascii=True))
+        return 1
+
+    print(
+        json.dumps(
+            {
+                "created": True,
+                "module_id": module_id,
+                "files": written,
+            },
+            ensure_ascii=True,
+            indent=2,
+        )
+    )
+    return 0
+
+
+def cmd_test_module(args: argparse.Namespace) -> int:
+    ctx = _build_module_context()
+    report = run_module_conformance(
+        modules_dir=MODULES_PATH,
+        ctx=ctx,
+        module_id=args.module_id,
+    )
+    print(json.dumps(report, ensure_ascii=True, indent=2))
+    return 0 if report.get("ok") else 1
 
 
 def cmd_new_intent(args: argparse.Namespace) -> int:
@@ -764,6 +807,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_modules = sub.add_parser("list-modules", help="List loaded policy/planner/executor modules")
     list_modules.set_defaults(func=cmd_list_modules)
+
+    init_module = sub.add_parser(
+        "init-module",
+        help="Scaffold a new module directory with module.toml and module.py",
+    )
+    init_module.add_argument("module_id", help="New module id (directory name)")
+    init_module.add_argument("--force", action="store_true", help="Overwrite existing scaffold files")
+    init_module.set_defaults(func=cmd_init_module)
+
+    test_module = sub.add_parser(
+        "test-module",
+        help="Run module conformance checks against manifest and plugin contract",
+    )
+    test_module.add_argument(
+        "--module-id",
+        default=None,
+        help="Optional module id to test only one module",
+    )
+    test_module.set_defaults(func=cmd_test_module)
 
     new_intent = sub.add_parser(
         "new-intent",

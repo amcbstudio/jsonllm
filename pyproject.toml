@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jsonllm-kernel"
+version = "0.1.0"
+description = "Deterministic event-sourced kernel for modular LLM automation"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "openai>=1.0.0",
+  "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[project.scripts]
+jsonllm = "event_pipeline:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = ["event_pipeline"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["jsonllm_kernel*"]

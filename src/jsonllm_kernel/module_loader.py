@@ -8,7 +8,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from .module_api import ModulePlugin
+from .module_api import MODULE_API_VERSION, ModulePlugin
 
 
 class ModuleEntrypoint(BaseModel):
@@ -22,6 +22,7 @@ class ModuleManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     module_id: str = Field(min_length=1)
+    module_api_version: int = 1
     name: str = Field(min_length=1)
     version: str = Field(min_length=1)
     priority: int = 100
@@ -59,7 +60,15 @@ class ModuleLoadError(RuntimeError):
 def _load_manifest(module_toml_path: Path) -> ModuleManifest:
     try:
         data = tomllib.loads(module_toml_path.read_text(encoding="utf-8"))
-        return ModuleManifest.model_validate(data)
+        manifest = ModuleManifest.model_validate(data)
+        if manifest.module_api_version != MODULE_API_VERSION:
+            raise ModuleLoadError(
+                (
+                    f"Module '{manifest.module_id}' has module_api_version="
+                    f"{manifest.module_api_version}, expected {MODULE_API_VERSION}"
+                )
+            )
+        return manifest
     except (OSError, ValidationError, tomllib.TOMLDecodeError) as exc:
         raise ModuleLoadError(f"Invalid module manifest at {module_toml_path}: {exc}") from exc
 

@@ -1,4 +1,5 @@
 module_id = "math_sum"
+module_api_version = 1
 name = "Math Sum Module"
 version = "1.0.0"
 priority = 50

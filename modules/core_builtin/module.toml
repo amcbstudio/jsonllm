@@ -1,4 +1,5 @@
 module_id = "core_builtin"
+module_api_version = 1
 name = "Core Builtin Module"
 version = "1.0.0"
 priority = 100

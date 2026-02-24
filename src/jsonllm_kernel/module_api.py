@@ -17,6 +17,8 @@ from .contracts import (
     validate_arg_type,
 )
 
+MODULE_API_VERSION = 1
+
 
 @dataclass(frozen=True)
 class PolicyDecision:
