@@ -1,0 +1,41 @@
+{
+  "event_id": "11111111-1111-4111-8111-111111111111",
+  "event_type": "IntentNormalized",
+  "schema_version": 1,
+  "timestamp": "2026-02-24T12:00:00Z",
+  "actor": {
+    "type": "llm",
+    "id": "normalizer.v1"
+  },
+  "correlation_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "causation_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "idempotency_key": "intent-operator-001",
+  "aggregate_id": "request-123",
+  "confidence": 0.87,
+  "evidence": [
+    {
+      "source_ref": "operator_input",
+      "field": "request_text",
+      "rationale": "Operator asked to search company debt data"
+    }
+  ],
+  "payload": {
+    "request_text": "Procure dados de divida da empresa XPTO",
+    "intent": "company_search",
+    "entities": [
+      {
+        "type": "company_name",
+        "value": "XPTO"
+      }
+    ],
+    "constraints": {
+      "max_results": 10,
+      "locale": "pt-BR"
+    },
+    "requested_outputs": [
+      "basic_profile",
+      "debt_summary"
+    ],
+    "priority": "normal"
+  }
+}

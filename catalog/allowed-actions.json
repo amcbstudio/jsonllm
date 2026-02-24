@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "actions": [
+    {
+      "id": "person.search.v1",
+      "description": "Search a person dataset by free-text query.",
+      "args": {
+        "query": "string",
+        "max_results": "integer"
+      }
+    },
+    {
+      "id": "company.search.v1",
+      "description": "Search a company dataset by free-text query.",
+      "args": {
+        "query": "string",
+        "max_results": "integer"
+      }
+    },
+    {
+      "id": "document.extract.v1",
+      "description": "Extract structured fields from a document reference.",
+      "args": {
+        "document_ref": "string",
+        "fields": "string_array"
+      }
+    },
+    {
+      "id": "record.classify.v1",
+      "description": "Classify one record using a predefined taxonomy.",
+      "args": {
+        "record_ref": "string",
+        "taxonomy": "string"
+      }
+    }
+  ]
+}

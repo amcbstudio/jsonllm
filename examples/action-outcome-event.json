@@ -1,0 +1,22 @@
+{
+  "event_id": "33333333-3333-4333-8333-333333333333",
+  "event_type": "ActionOutcome",
+  "schema_version": 1,
+  "timestamp": "2026-02-24T12:02:00Z",
+  "actor": {
+    "type": "service",
+    "id": "executor.v1"
+  },
+  "correlation_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "causation_id": "22222222-2222-4222-8222-222222222222",
+  "idempotency_key": "outcome-operator-001",
+  "aggregate_id": "request-123",
+  "payload": {
+    "proposal_event_id": "22222222-2222-4222-8222-222222222222",
+    "action_id": "company.search.v1",
+    "status": "executed",
+    "executor_id": "executor.v1",
+    "details": "Execution completed with 8 records",
+    "output_ref": "result://request-123/company-search.json"
+  }
+}
