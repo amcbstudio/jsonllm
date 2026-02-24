@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "routes": [
+    {
+      "intent": "person_search",
+      "action_id": "person.search.v1",
+      "reason": "intent person_search accepted by policy",
+      "arg_bindings": {
+        "query": {
+          "from": "request_text",
+          "required": true
+        },
+        "max_results": {
+          "from": "constraints.max_results",
+          "default": 10,
+          "required": true
+        }
+      }
+    },
+    {
+      "intent": "company_search",
+      "action_id": "company.search.v1",
+      "reason": "intent company_search accepted by policy",
+      "arg_bindings": {
+        "query": {
+          "from": "request_text",
+          "required": true
+        },
+        "max_results": {
+          "from": "constraints.max_results",
+          "default": 10,
+          "required": true
+        }
+      }
+    },
+    {
+      "intent": "document_extraction",
+      "action_id": "document.extract.v1",
+      "reason": "intent document_extraction accepted by policy",
+      "arg_bindings": {
+        "document_ref": {
+          "from": "entity:document_ref",
+          "required": true
+        },
+        "fields": {
+          "from": "requested_outputs",
+          "required": true
+        }
+      }
+    },
+    {
+      "intent": "classification",
+      "action_id": "record.classify.v1",
+      "reason": "intent classification accepted by policy",
+      "arg_bindings": {
+        "record_ref": {
+          "from": "entity:record_ref",
+          "required": true
+        },
+        "taxonomy": {
+          "from": "entity:taxonomy",
+          "default": "default_taxonomy_v1",
+          "required": true
+        }
+      }
+    }
+  ]
+}

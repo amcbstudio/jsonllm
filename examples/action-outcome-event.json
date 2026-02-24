@@ -1,7 +1,7 @@
 {
   "event_id": "33333333-3333-4333-8333-333333333333",
   "event_type": "ActionOutcome",
-  "schema_version": 1,
+  "schema_version": 2,
   "timestamp": "2026-02-24T12:02:00Z",
   "actor": {
     "type": "service",
@@ -16,7 +16,7 @@
     "action_id": "company.search.v1",
     "status": "executed",
     "executor_id": "executor.v1",
-    "details": "Execution completed with 8 records",
-    "output_ref": "result://request-123/company-search.json"
+    "details": "deterministic search completed (max_results=10)",
+    "output_ref": "result://company.search.v1/demo-output.json"
   }
 }

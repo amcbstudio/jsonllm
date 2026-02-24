@@ -1,44 +1,32 @@
-# JSONLLM Deterministic Event Pipeline (Pydantic + OpenAI Structured Outputs)
+# JSONLLM Deterministic Event Pipeline
 
-This repository implements the pattern:
+`LLM -> strict JSON event -> deterministic policy -> deterministic planner -> deterministic executor -> append-only JSONL`
 
-`LLM -> strict JSON event -> deterministic validation -> append-only JSONL`
+The LLM is only used for ingress normalization (`IntentNormalized`).
+Every side effect decision is made by deterministic workers.
 
-The model never executes side effects. It only emits structured events. Deterministic workers validate and decide execution.
+## Security posture
 
-Write-path policy: only one CLI entrance can write to the event log.
+- The LLM cannot execute actions directly.
+- Only trusted actors can emit specific event types (`actor.id` is enforced by `event_type`).
+- Execution requires lineage: `IntentAccepted -> ActionProposed -> ActionOutcome`.
+- `ActionProposed.action_id` must exist in the allowlist catalog and args must match typed schema.
+- Duplicate `idempotency_key` is rejected.
 
 ## Stack
 
-- `pydantic` for strict event validation.
-- `openai` structured outputs for intent normalization (`new-intent`).
-- JSONL append-only storage (`data/events.jsonl`).
-
-## Event types
-
-- `IntentNormalized`
-- `ActionProposed`
-- `ActionOutcome`
-
-Every event includes:
-
-- `event_id`
-- `event_type`
-- `schema_version`
-- `timestamp`
-- `actor`
-- `correlation_id`
-- `causation_id`
-- `idempotency_key`
-- `aggregate_id`
-- `payload`
+- Python
+- `pydantic` for strict event typing/validation
+- OpenAI Structured Outputs (`responses.parse` / fallback parse API)
+- JSONL append-only event log (`data/events.jsonl`)
 
 ## Files
 
-- `src/event_pipeline.py`: Pydantic models, OpenAI normalization, deterministic append pipeline.
-- `catalog/allowed-actions.json`: allowlist catalog (`action_id` + typed args).
-- `examples/*.json`: sample valid events.
-- `requirements.txt`: Python dependencies.
+- `src/event_pipeline.py`: ingress + deterministic workers
+- `catalog/allowed-actions.json`: allowlist of executable capabilities
+- `catalog/policy-config.json`: deterministic policy rules
+- `catalog/intent-routes.json`: deterministic intent->action routing + arg bindings
+- `examples/*.json`: sample events
 
 ## Install
 
@@ -46,7 +34,7 @@ Every event includes:
 python3 -m pip install -r requirements.txt
 ```
 
-Set your API key:
+Set API key for ingress normalization:
 
 ```bash
 export OPENAI_API_KEY="your_key"
@@ -60,27 +48,50 @@ Validate one event file:
 python3 src/event_pipeline.py validate examples/intent-event.json
 ```
 
-Single write entrance: create `IntentNormalized` from natural language using OpenAI structured outputs:
+Ingress (single LLM entrypoint):
 
 ```bash
 python3 src/event_pipeline.py new-intent \
-  --request-text "Procure pessoas ligadas a XPTO" \
+  --request-text "Procure dados de divida da empresa XPTO" \
   --model gpt-4.1-mini \
-  --aggregate-id request-456
+  --aggregate-id request-123
 ```
 
-Print generated event without appending:
+Policy worker (deterministic):
 
 ```bash
-python3 src/event_pipeline.py new-intent \
-  --request-text "Classifique o documento A" \
-  --print-only
+python3 src/event_pipeline.py run-policy
 ```
 
-## Deterministic guardrails
+Planner worker (deterministic):
 
-- Event validation is done by Pydantic discriminated unions.
-- `ActionProposed.action_id` must exist in the allowlist catalog.
-- Action args are type-checked (`string`, `integer`, `string_array`).
-- Duplicate `idempotency_key` is rejected on append.
-- External/manual append is disabled in the CLI to keep one deterministic ingress path.
+```bash
+python3 src/event_pipeline.py run-planner
+```
+
+Executor worker (deterministic handlers):
+
+```bash
+python3 src/event_pipeline.py run-executor
+```
+
+Dry-run options (no append):
+
+```bash
+python3 src/event_pipeline.py run-policy --dry-run
+python3 src/event_pipeline.py run-planner --dry-run
+python3 src/event_pipeline.py run-executor --dry-run
+```
+
+## Event sequence
+
+1. `IntentNormalized` (actor `normalizer.v1`)
+2. `IntentAccepted` or `IntentRejected` (actor `policy.v1`)
+3. `ActionProposed` (actor `planner.v1`, only for accepted intents)
+4. `ActionOutcome` (actor `executor.v1`)
+
+## Add/remove functionalities
+
+- Remove capability: delete route in `catalog/intent-routes.json` and/or action in `catalog/allowed-actions.json`.
+- Add capability: add allowlisted action in `catalog/allowed-actions.json`, then add a matching route in `catalog/intent-routes.json`.
+- Policy controls whether an intent is executable via `catalog/policy-config.json`.
