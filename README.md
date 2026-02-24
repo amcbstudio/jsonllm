@@ -6,6 +6,8 @@ This repository implements the pattern:
 
 The model never executes side effects. It only emits structured events. Deterministic workers validate and decide execution.
 
+Write-path policy: only one CLI entrance can write to the event log.
+
 ## Stack
 
 - `pydantic` for strict event validation.
@@ -58,13 +60,7 @@ Validate one event file:
 python3 src/event_pipeline.py validate examples/intent-event.json
 ```
 
-Validate + append into JSONL:
-
-```bash
-python3 src/event_pipeline.py append examples/action-proposed-event.json
-```
-
-Create `IntentNormalized` from natural language using OpenAI structured outputs:
+Single write entrance: create `IntentNormalized` from natural language using OpenAI structured outputs:
 
 ```bash
 python3 src/event_pipeline.py new-intent \
@@ -87,3 +83,4 @@ python3 src/event_pipeline.py new-intent \
 - `ActionProposed.action_id` must exist in the allowlist catalog.
 - Action args are type-checked (`string`, `integer`, `string_array`).
 - Duplicate `idempotency_key` is rejected on append.
+- External/manual append is disabled in the CLI to keep one deterministic ingress path.

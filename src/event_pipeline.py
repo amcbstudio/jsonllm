@@ -351,23 +351,6 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_append(args: argparse.Namespace) -> int:
-    event_raw = json.loads(Path(args.event).read_text(encoding="utf-8"))
-    event, errors = validate_event(event_raw)
-    if errors or event is None:
-        print(json.dumps({"appended": False, "errors": errors}, ensure_ascii=True))
-        return 1
-
-    existing_keys = _existing_idempotency_keys(EVENTS_PATH)
-    if event.idempotency_key in existing_keys:
-        print(json.dumps({"appended": False, "reason": "duplicate idempotency_key"}, ensure_ascii=True))
-        return 1
-
-    _append_event(event, EVENTS_PATH)
-    print(json.dumps({"appended": True, "event_id": str(event.event_id)}, ensure_ascii=True))
-    return 0
-
-
 def cmd_new_intent(args: argparse.Namespace) -> int:
     instructions = (
         "Normalize operator requests into structured intent. "
@@ -426,18 +409,22 @@ def cmd_new_intent(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Deterministic JSONL event pipeline with Pydantic + OpenAI structured outputs")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Deterministic JSONL pipeline with a single write entrance: "
+            "new-intent (OpenAI structured outputs)"
+        )
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     validate = sub.add_parser("validate", help="Validate an event JSON file")
     validate.add_argument("event", help="Path to event JSON file")
     validate.set_defaults(func=cmd_validate)
 
-    append = sub.add_parser("append", help="Validate and append event to data/events.jsonl")
-    append.add_argument("event", help="Path to event JSON file")
-    append.set_defaults(func=cmd_append)
-
-    new_intent = sub.add_parser("new-intent", help="Create IntentNormalized via OpenAI structured outputs")
+    new_intent = sub.add_parser(
+        "new-intent",
+        help="Single write entrance: create and append IntentNormalized via OpenAI structured outputs",
+    )
     new_intent.add_argument("--request-text", required=True)
     new_intent.add_argument("--model", default="gpt-4.1-mini")
     new_intent.add_argument("--aggregate-id", default="request-stream")
