@@ -4,7 +4,8 @@
     "person_search",
     "company_search",
     "document_extraction",
-    "classification"
+    "classification",
+    "calculation"
   ],
   "blocked_request_terms": [
     "password",

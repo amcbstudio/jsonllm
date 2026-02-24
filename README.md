@@ -95,3 +95,24 @@ python3 src/event_pipeline.py run-executor --dry-run
 - Remove capability: delete route in `catalog/intent-routes.json` and/or action in `catalog/allowed-actions.json`.
 - Add capability: add allowlisted action in `catalog/allowed-actions.json`, then add a matching route in `catalog/intent-routes.json`.
 - Policy controls whether an intent is executable via `catalog/policy-config.json`.
+
+## Tangible execution example
+
+`math.sum.v1` performs real deterministic computation and writes an output file under `data/outputs/`.
+
+```bash
+python3 src/event_pipeline.py new-intent \
+  --request-text "Calculate the sum of 12.5, 7 and -3" \
+  --aggregate-id calc-001
+
+python3 src/event_pipeline.py run-policy
+python3 src/event_pipeline.py run-planner
+python3 src/event_pipeline.py run-executor
+```
+
+Then inspect:
+
+```bash
+ls -la data/outputs
+cat data/outputs/math_sum_v1_*.json
+```

@@ -32,6 +32,13 @@
         "record_ref": "string",
         "taxonomy": "string"
       }
+    },
+    {
+      "id": "math.sum.v1",
+      "description": "Compute deterministic sum from numeric terms extracted from an expression.",
+      "args": {
+        "expression": "string"
+      }
     }
   ]
 }

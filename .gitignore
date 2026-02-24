@@ -1,3 +1,4 @@
 data/events.jsonl
+data/outputs/
 __pycache__/
 *.pyc

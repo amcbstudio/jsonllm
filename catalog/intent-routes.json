@@ -63,6 +63,17 @@
           "required": true
         }
       }
+    },
+    {
+      "intent": "calculation",
+      "action_id": "math.sum.v1",
+      "reason": "intent calculation accepted by policy",
+      "arg_bindings": {
+        "expression": {
+          "from": "request_text",
+          "required": true
+        }
+      }
     }
   ]
 }
