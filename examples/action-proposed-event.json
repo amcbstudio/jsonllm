@@ -1,7 +1,8 @@
 {
   "event_id": "22222222-2222-4222-8222-222222222222",
   "event_type": "ActionProposed",
-  "schema_version": 2,
+  "schema_version": 3,
+  "module_id": "core_builtin",
   "timestamp": "2026-02-24T12:01:00Z",
   "actor": {
     "type": "service",

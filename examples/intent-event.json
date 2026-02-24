@@ -1,7 +1,8 @@
 {
   "event_id": "11111111-1111-4111-8111-111111111111",
   "event_type": "IntentNormalized",
-  "schema_version": 2,
+  "schema_version": 3,
+  "module_id": "kernel.ingress",
   "timestamp": "2026-02-24T12:00:00Z",
   "actor": {
     "type": "llm",

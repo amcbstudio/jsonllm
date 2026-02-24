@@ -1,7 +1,8 @@
 {
   "event_id": "33333333-3333-4333-8333-333333333333",
   "event_type": "ActionOutcome",
-  "schema_version": 2,
+  "schema_version": 3,
+  "module_id": "core_builtin",
   "timestamp": "2026-02-24T12:02:00Z",
   "actor": {
     "type": "service",
@@ -17,6 +18,6 @@
     "status": "executed",
     "executor_id": "executor.v1",
     "details": "deterministic search completed (max_results=10)",
-    "output_ref": "result://company.search.v1/demo-output.json"
+    "output_ref": "data/outputs/core_builtin__company_search_v1_demo-output.json"
   }
 }

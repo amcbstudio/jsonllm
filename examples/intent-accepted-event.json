@@ -1,7 +1,8 @@
 {
   "event_id": "44444444-4444-4444-8444-444444444444",
   "event_type": "IntentAccepted",
-  "schema_version": 2,
+  "schema_version": 3,
+  "module_id": "core_builtin",
   "timestamp": "2026-02-24T12:00:30Z",
   "actor": {
     "type": "service",
@@ -14,8 +15,8 @@
   "payload": {
     "intent_event_id": "11111111-1111-4111-8111-111111111111",
     "rule_ids": [
-      "POL-OK"
+      "CB-POL-OK"
     ],
-    "summary": "Intent passed deterministic policy checks"
+    "summary": "Intent accepted by core built-in policy"
   }
 }

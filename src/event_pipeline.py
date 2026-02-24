@@ -1,37 +1,50 @@
 #!/usr/bin/env python3
 import argparse
-import datetime as dt
-import hashlib
 import json
 import os
-import re
 import uuid
 from pathlib import Path
-from typing import Annotated, Any, Literal, Union
+from typing import Any
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    TypeAdapter,
-    ValidationError,
-    field_validator,
-    model_validator,
+from jsonllm_kernel.contracts import (
+    ACTOR_EXECUTOR,
+    ACTOR_NORMALIZER,
+    ACTOR_PLANNER,
+    ACTOR_POLICY,
+    SCHEMA_VERSION,
+    ActionOutcomeEvent,
+    ActionOutcomePayload,
+    ActionProposedEvent,
+    ActionProposedPayload,
+    AllowedActionsCatalog,
+    Actor,
+    Event,
+    IntentAcceptedEvent,
+    IntentAcceptedPayload,
+    IntentNormalizedEvent,
+    IntentNormalizedPayload,
+    IntentRejectedEvent,
+    IntentRejectedPayload,
+    IntentRoutesCatalog,
+    OpenAIIntentExtraction,
+    PolicyConfig,
+    event_json_dict,
+    make_hash,
+    make_idempotency_key,
+    now_utc,
+    parse_event,
+    validate_action_against_catalog,
 )
+from jsonllm_kernel.module_api import ModuleContext
+from jsonllm_kernel.module_loader import ModuleLoadError, ModuleRegistry, load_module_registry
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = ROOT / "catalog" / "allowed-actions.json"
 POLICY_PATH = ROOT / "catalog" / "policy-config.json"
 ROUTES_PATH = ROOT / "catalog" / "intent-routes.json"
+MODULES_PATH = ROOT / "modules"
 EVENTS_PATH = ROOT / "data" / "events.jsonl"
 OUTPUTS_PATH = ROOT / "data" / "outputs"
-
-SCHEMA_VERSION = 2
-
-ACTOR_NORMALIZER = "normalizer.v1"
-ACTOR_POLICY = "policy.v1"
-ACTOR_PLANNER = "planner.v1"
-ACTOR_EXECUTOR = "executor.v1"
 
 AUTHORIZED_EMITTER_BY_EVENT: dict[str, tuple[str, str]] = {
     "IntentNormalized": ("llm", ACTOR_NORMALIZER),
@@ -40,247 +53,6 @@ AUTHORIZED_EMITTER_BY_EVENT: dict[str, tuple[str, str]] = {
     "ActionProposed": ("service", ACTOR_PLANNER),
     "ActionOutcome": ("service", ACTOR_EXECUTOR),
 }
-
-
-class Actor(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    type: Literal["human", "llm", "service"]
-    id: str = Field(min_length=1)
-
-
-class Evidence(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    source_ref: str = Field(min_length=1)
-    excerpt_hash: str | None = Field(default=None, min_length=1)
-    field: str = Field(min_length=1)
-    rationale: str = Field(min_length=1)
-
-
-class IntentEntity(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    type: str = Field(min_length=1)
-    value: str = Field(min_length=1)
-
-
-class IntentConstraints(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    max_results: int | None = Field(default=None, ge=1, le=100)
-    locale: str | None = Field(default=None, min_length=2)
-
-
-class IntentNormalizedPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    request_text: str = Field(min_length=1)
-    intent: Literal[
-        "person_search",
-        "company_search",
-        "document_extraction",
-        "classification",
-        "calculation",
-        "unknown",
-    ]
-    entities: list[IntentEntity] = Field(default_factory=list)
-    constraints: IntentConstraints | None = None
-    requested_outputs: list[str] = Field(min_length=1)
-    priority: Literal["low", "normal", "high"] = "normal"
-    notes: str | None = None
-
-    @field_validator("requested_outputs")
-    @classmethod
-    def _validate_requested_outputs(cls, value: list[str]) -> list[str]:
-        if not all(isinstance(item, str) and item.strip() for item in value):
-            raise ValueError("requested_outputs must contain non-empty strings")
-        return value
-
-
-class IntentAcceptedPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    intent_event_id: uuid.UUID
-    rule_ids: list[str] = Field(min_length=1)
-    summary: str = Field(min_length=1)
-
-
-class IntentRejectedPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    intent_event_id: uuid.UUID
-    rule_ids: list[str] = Field(min_length=1)
-    reasons: list[str] = Field(min_length=1)
-    rejection_code: str = Field(min_length=1)
-
-
-class ActionProposedPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    accepted_event_id: uuid.UUID | None = None
-    action_id: str = Field(min_length=1)
-    args: dict[str, Any]
-    reason: str = Field(min_length=1)
-    dry_run: bool = False
-    preconditions: list[str] = Field(default_factory=list)
-
-
-class ActionOutcomePayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    proposal_event_id: uuid.UUID
-    action_id: str = Field(min_length=1)
-    status: Literal["accepted", "rejected", "executed", "failed"]
-    executor_id: str = Field(min_length=1)
-    details: str | None = None
-    error_code: str | None = None
-    output_ref: str | None = None
-
-
-class BaseEvent(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    event_id: uuid.UUID
-    schema_version: int = Field(ge=1)
-    timestamp: dt.datetime
-    tenant_id: str | None = Field(default=None, min_length=1)
-    actor: Actor
-    correlation_id: uuid.UUID
-    causation_id: uuid.UUID
-    idempotency_key: str = Field(min_length=1)
-    aggregate_id: str = Field(min_length=1)
-    confidence: float | None = Field(default=None, ge=0, le=1)
-    evidence: list[Evidence] | None = None
-
-
-class IntentNormalizedEvent(BaseEvent):
-    event_type: Literal["IntentNormalized"]
-    payload: IntentNormalizedPayload
-
-
-class IntentAcceptedEvent(BaseEvent):
-    event_type: Literal["IntentAccepted"]
-    payload: IntentAcceptedPayload
-
-
-class IntentRejectedEvent(BaseEvent):
-    event_type: Literal["IntentRejected"]
-    payload: IntentRejectedPayload
-
-
-class ActionProposedEvent(BaseEvent):
-    event_type: Literal["ActionProposed"]
-    payload: ActionProposedPayload
-
-
-class ActionOutcomeEvent(BaseEvent):
-    event_type: Literal["ActionOutcome"]
-    payload: ActionOutcomePayload
-
-
-Event = Annotated[
-    Union[
-        IntentNormalizedEvent,
-        IntentAcceptedEvent,
-        IntentRejectedEvent,
-        ActionProposedEvent,
-        ActionOutcomeEvent,
-    ],
-    Field(discriminator="event_type"),
-]
-EVENT_ADAPTER = TypeAdapter(Event)
-
-
-class ActionSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: str = Field(min_length=1)
-    description: str = Field(min_length=1)
-    args: dict[str, Literal["string", "integer", "string_array"]]
-
-
-class AllowedActionsCatalog(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    version: int = Field(ge=1)
-    actions: list[ActionSpec] = Field(default_factory=list)
-
-
-class PolicyConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    version: int = Field(ge=1)
-    allowed_intents: list[str] = Field(default_factory=list)
-    blocked_request_terms: list[str] = Field(default_factory=list)
-    max_requested_outputs: int = Field(default=10, ge=1, le=100)
-    require_route: bool = True
-
-
-class ArgBinding(BaseModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    from_path: str | None = Field(default=None, alias="from")
-    const: Any | None = None
-    default: Any | None = None
-    required: bool = True
-
-    @model_validator(mode="after")
-    def _validate_binding(self) -> "ArgBinding":
-        if self.from_path is None and self.const is None:
-            raise ValueError("binding must define either 'from' or 'const'")
-        return self
-
-
-class IntentRoute(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    intent: str = Field(min_length=1)
-    action_id: str = Field(min_length=1)
-    reason: str = Field(min_length=1)
-    arg_bindings: dict[str, ArgBinding]
-
-
-class IntentRoutesCatalog(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    version: int = Field(ge=1)
-    routes: list[IntentRoute] = Field(default_factory=list)
-
-
-class OpenAIIntentExtraction(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    intent: Literal[
-        "person_search",
-        "company_search",
-        "document_extraction",
-        "classification",
-        "calculation",
-        "unknown",
-    ]
-    entities: list[IntentEntity] = Field(default_factory=list)
-    constraints: IntentConstraints | None = None
-    requested_outputs: list[str] = Field(min_length=1)
-    priority: Literal["low", "normal", "high"] = "normal"
-    notes: str | None = None
-    confidence: float = Field(ge=0, le=1)
-    evidence: list[Evidence] = Field(min_length=1)
-
-    @field_validator("requested_outputs")
-    @classmethod
-    def _validate_requested_outputs(cls, value: list[str]) -> list[str]:
-        if not all(isinstance(item, str) and item.strip() for item in value):
-            raise ValueError("requested_outputs must contain non-empty strings")
-        return value
-
-
-class PolicyResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    accepted: bool
-    rule_ids: list[str]
-    reasons: list[str]
 
 
 def _load_actions_catalog() -> AllowedActionsCatalog:
@@ -295,23 +67,21 @@ def _load_routes_catalog() -> IntentRoutesCatalog:
     return IntentRoutesCatalog.model_validate_json(ROUTES_PATH.read_text(encoding="utf-8"))
 
 
-def _validation_errors(exc: ValidationError) -> list[str]:
-    out = []
-    for err in exc.errors():
-        loc = ".".join(str(i) for i in err.get("loc", []))
-        msg = err.get("msg", "validation error")
-        out.append(f"{loc}: {msg}" if loc else msg)
-    return out
+def _build_module_context() -> ModuleContext:
+    return ModuleContext(
+        root=ROOT,
+        outputs_path=OUTPUTS_PATH,
+        actions_catalog=_load_actions_catalog(),
+        policy_config=_load_policy_config(),
+        routes_catalog=_load_routes_catalog(),
+    )
 
 
-def _validate_arg_type(value: Any, expected_type: str) -> bool:
-    if expected_type == "string":
-        return isinstance(value, str) and bool(value.strip())
-    if expected_type == "integer":
-        return isinstance(value, int) and not isinstance(value, bool)
-    if expected_type == "string_array":
-        return isinstance(value, list) and all(isinstance(item, str) and item.strip() for item in value)
-    return False
+def _load_registry() -> ModuleRegistry:
+    try:
+        return load_module_registry(MODULES_PATH)
+    except ModuleLoadError as exc:
+        raise RuntimeError(str(exc)) from exc
 
 
 def _validate_actor_authority(event: Event) -> list[str]:
@@ -320,15 +90,10 @@ def _validate_actor_authority(event: Event) -> list[str]:
         return [f"event_type '{event.event_type}' has no authorization mapping"]
 
     expected_type, expected_id = expected
-
-    # Backward-compatible parsing for legacy v1 logs: enforce actor.id only.
-    if event.schema_version <= 1:
+    if event.schema_version <= 2:
         if event.actor.id != expected_id:
             return [
-                (
-                    f"actor.id '{event.actor.id}' is not authorized for event_type "
-                    f"'{event.event_type}'"
-                )
+                f"actor.id '{event.actor.id}' is not authorized for event_type '{event.event_type}'"
             ]
         return []
 
@@ -336,41 +101,29 @@ def _validate_actor_authority(event: Event) -> list[str]:
         return [
             (
                 f"actor '{event.actor.type}:{event.actor.id}' is not authorized for "
-                f"event_type '{event.event_type}', expected "
-                f"'{expected_type}:{expected_id}'"
+                f"event_type '{event.event_type}', expected '{expected_type}:{expected_id}'"
             )
         ]
 
     return []
 
 
-def _validate_action_against_catalog(
-    event: ActionProposedEvent,
-    actions_catalog: AllowedActionsCatalog,
-) -> list[str]:
-    errors: list[str] = []
-    actions = {action.id: action for action in actions_catalog.actions}
-    spec = actions.get(event.payload.action_id)
-    if spec is None:
-        return [f"payload.action_id not allowed: {event.payload.action_id}"]
+def _validate_module_provenance(event: Event) -> list[str]:
+    if event.schema_version <= 2:
+        return []
 
-    provided = event.payload.args
-    required_keys = set(spec.args.keys())
-    provided_keys = set(provided.keys())
+    if not event.module_id:
+        return ["module_id is required for schema_version >= 3"]
 
-    missing = sorted(required_keys - provided_keys)
-    if missing:
-        errors.append("payload.args missing keys: " + ", ".join(missing))
+    if event.event_type == "IntentNormalized":
+        if event.module_id != "kernel.ingress":
+            return ["IntentNormalized must use module_id='kernel.ingress'"]
+        return []
 
-    unknown = sorted(provided_keys - required_keys)
-    if unknown:
-        errors.append("payload.args unknown keys: " + ", ".join(unknown))
+    if event.module_id == "kernel.ingress":
+        return [f"event_type '{event.event_type}' cannot use module_id='kernel.ingress'"]
 
-    for key, expected_type in spec.args.items():
-        if key in provided and not _validate_arg_type(provided[key], expected_type):
-            errors.append(f"payload.args.{key} must be {expected_type}")
-
-    return errors
+    return []
 
 
 def validate_event(
@@ -380,86 +133,27 @@ def validate_event(
     if actions_catalog is None:
         actions_catalog = _load_actions_catalog()
 
-    try:
-        event = EVENT_ADAPTER.validate_python(event_dict)
-    except ValidationError as exc:
-        return None, _validation_errors(exc)
-
-    errors: list[str] = []
-    errors.extend(_validate_actor_authority(event))
-
-    if isinstance(event, ActionProposedEvent):
-        errors.extend(_validate_action_against_catalog(event, actions_catalog))
-
-    if errors:
+    event, errors = parse_event(event_dict)
+    if errors or event is None:
         return None, errors
 
+    out: list[str] = []
+    out.extend(_validate_actor_authority(event))
+    out.extend(_validate_module_provenance(event))
+
+    if isinstance(event, ActionProposedEvent):
+        out.extend(validate_action_against_catalog(event, actions_catalog))
+
+    if out:
+        return None, out
+
     return event, []
-
-
-def _event_json_dict(event: Event) -> dict[str, Any]:
-    return event.model_dump(mode="json", exclude_none=True)
-
-
-def _resolve_path(source: dict[str, Any], path: str) -> Any | None:
-    current: Any = source
-    for part in path.split("."):
-        if not isinstance(current, dict) or part not in current:
-            return None
-        current = current[part]
-    return current
-
-
-def _resolve_binding_value(payload: IntentNormalizedPayload, binding: ArgBinding) -> Any | None:
-    if binding.const is not None:
-        return binding.const
-
-    if binding.from_path is None:
-        return None
-
-    if binding.from_path.startswith("entity:"):
-        entity_type = binding.from_path.split(":", 1)[1]
-        for entity in payload.entities:
-            if entity.type == entity_type:
-                return entity.value
-        return binding.default
-
-    payload_dict = payload.model_dump(mode="json", exclude_none=False)
-    value = _resolve_path(payload_dict, binding.from_path)
-    if value is None:
-        return binding.default
-    return value
-
-
-def _build_route_args(payload: IntentNormalizedPayload, route: IntentRoute) -> tuple[dict[str, Any], list[str]]:
-    args: dict[str, Any] = {}
-    errors: list[str] = []
-
-    for arg_name, binding in route.arg_bindings.items():
-        value = _resolve_binding_value(payload, binding)
-        if value is None and binding.required:
-            errors.append(
-                f"arg '{arg_name}' could not be resolved from binding '{binding.from_path}'"
-            )
-            continue
-        args[arg_name] = value
-
-    return args, errors
-
-
-def _make_hash(payload: dict[str, Any]) -> str:
-    raw = json.dumps(payload, sort_keys=True, ensure_ascii=True).encode("utf-8")
-    return hashlib.sha256(raw).hexdigest()
-
-
-def _make_idempotency_key(stage: str, source_event_id: uuid.UUID) -> str:
-    return _make_hash({"stage": stage, "source_event_id": str(source_event_id)})
 
 
 def _append_event(event: Event, events_path: Path) -> None:
     events_path.parent.mkdir(parents=True, exist_ok=True)
     with events_path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(_event_json_dict(event), ensure_ascii=True))
+        f.write(json.dumps(event_json_dict(event), ensure_ascii=True))
         f.write("\n")
 
 
@@ -493,70 +187,6 @@ def _existing_idempotency_keys(events: list[Event]) -> set[str]:
 
 def _event_index(events: list[Event]) -> dict[uuid.UUID, Event]:
     return {event.event_id: event for event in events}
-
-
-def _route_map(routes_catalog: IntentRoutesCatalog) -> dict[str, IntentRoute]:
-    return {route.intent: route for route in routes_catalog.routes}
-
-
-def _evaluate_policy(
-    intent_event: IntentNormalizedEvent,
-    policy: PolicyConfig,
-    actions_catalog: AllowedActionsCatalog,
-    route_map: dict[str, IntentRoute],
-) -> PolicyResult:
-    rule_ids: list[str] = []
-    reasons: list[str] = []
-    intent = intent_event.payload.intent
-
-    if intent == "unknown":
-        rule_ids.append("POL-001")
-        reasons.append("Intent 'unknown' is not executable")
-
-    if intent not in policy.allowed_intents:
-        rule_ids.append("POL-002")
-        reasons.append(f"Intent '{intent}' is not allowlisted by policy")
-
-    request_text_lower = intent_event.payload.request_text.lower()
-    for term in policy.blocked_request_terms:
-        if term.lower() in request_text_lower:
-            rule_ids.append("POL-003")
-            reasons.append(f"Request contains blocked term: '{term}'")
-            break
-
-    if len(intent_event.payload.requested_outputs) > policy.max_requested_outputs:
-        rule_ids.append("POL-004")
-        reasons.append(
-            f"requested_outputs exceeds policy max ({policy.max_requested_outputs})"
-        )
-
-    route = route_map.get(intent)
-    if policy.require_route and route is None:
-        rule_ids.append("POL-005")
-        reasons.append(f"No deterministic route configured for intent '{intent}'")
-
-    if route is not None:
-        action_spec = {a.id: a for a in actions_catalog.actions}.get(route.action_id)
-        if action_spec is None:
-            rule_ids.append("POL-006")
-            reasons.append(f"Route action_id '{route.action_id}' is not in allowlist catalog")
-        else:
-            args, arg_errors = _build_route_args(intent_event.payload, route)
-            if arg_errors:
-                rule_ids.append("POL-007")
-                reasons.extend(arg_errors)
-            else:
-                for key, arg_type in action_spec.args.items():
-                    if key not in args or not _validate_arg_type(args[key], arg_type):
-                        rule_ids.append("POL-008")
-                        reasons.append(f"Route produced invalid arg '{key}' for action '{route.action_id}'")
-                        break
-
-    accepted = len(reasons) == 0
-    if accepted:
-        return PolicyResult(accepted=True, rule_ids=["POL-OK"], reasons=[])
-
-    return PolicyResult(accepted=False, rule_ids=sorted(set(rule_ids)), reasons=reasons)
 
 
 def _extract_parsed_result(response: Any) -> OpenAIIntentExtraction:
@@ -624,10 +254,6 @@ def normalize_intent_with_openai(
     raise RuntimeError("OpenAI SDK does not support structured parse API. Upgrade openai package.")
 
 
-def _now_utc() -> dt.datetime:
-    return dt.datetime.now(dt.timezone.utc)
-
-
 def cmd_validate(args: argparse.Namespace) -> int:
     actions_catalog = _load_actions_catalog()
     event_raw = json.loads(Path(args.event).read_text(encoding="utf-8"))
@@ -637,6 +263,24 @@ def cmd_validate(args: argparse.Namespace) -> int:
         return 1
 
     print(json.dumps({"valid": True}, ensure_ascii=True))
+    return 0
+
+
+def cmd_list_modules(args: argparse.Namespace) -> int:
+    registry = _load_registry()
+    data = [
+        {
+            "module_id": item.manifest.module_id,
+            "name": item.manifest.name,
+            "version": item.manifest.version,
+            "priority": item.manifest.priority,
+            "intents": item.manifest.intents,
+            "actions": item.manifest.actions,
+            "permissions": item.manifest.permissions,
+        }
+        for item in registry.all()
+    ]
+    print(json.dumps(data, ensure_ascii=True, indent=2))
     return 0
 
 
@@ -664,11 +308,12 @@ def cmd_new_intent(args: argparse.Namespace) -> int:
         event_id=uuid.uuid4(),
         event_type="IntentNormalized",
         schema_version=SCHEMA_VERSION,
-        timestamp=_now_utc(),
+        module_id="kernel.ingress",
+        timestamp=now_utc(),
         actor=Actor(type="llm", id=ACTOR_NORMALIZER),
         correlation_id=correlation_id,
         causation_id=correlation_id,
-        idempotency_key=_make_hash(
+        idempotency_key=make_hash(
             {
                 "stage": "intent",
                 "request_text": args.request_text,
@@ -689,13 +334,13 @@ def cmd_new_intent(args: argparse.Namespace) -> int:
         ),
     )
 
-    _, errors = validate_event(_event_json_dict(event), actions_catalog=actions_catalog)
+    _, errors = validate_event(event_json_dict(event), actions_catalog=actions_catalog)
     if errors:
         print(json.dumps({"created": False, "errors": errors}, ensure_ascii=True))
         return 1
 
     if args.print_only:
-        print(json.dumps(_event_json_dict(event), ensure_ascii=True, indent=2))
+        print(json.dumps(event_json_dict(event), ensure_ascii=True, indent=2))
         return 0
 
     events = _read_events(actions_catalog)
@@ -709,10 +354,31 @@ def cmd_new_intent(args: argparse.Namespace) -> int:
     return 0
 
 
+def _security_precheck(intent_event: IntentNormalizedEvent, policy: PolicyConfig) -> tuple[bool, list[str], list[str]]:
+    rule_ids: list[str] = []
+    reasons: list[str] = []
+
+    request_text_lower = intent_event.payload.request_text.lower()
+    for term in policy.blocked_request_terms:
+        if term.lower() in request_text_lower:
+            rule_ids.append("SEC-001")
+            reasons.append(f"Request contains blocked term: '{term}'")
+            break
+
+    if len(intent_event.payload.requested_outputs) > policy.max_requested_outputs:
+        rule_ids.append("SEC-002")
+        reasons.append(
+            f"requested_outputs exceeds policy max ({policy.max_requested_outputs})"
+        )
+
+    return len(reasons) == 0, rule_ids, reasons
+
+
 def cmd_run_policy(args: argparse.Namespace) -> int:
-    actions_catalog = _load_actions_catalog()
-    policy = _load_policy_config()
-    route_map = _route_map(_load_routes_catalog())
+    ctx = _build_module_context()
+    actions_catalog = ctx.actions_catalog
+    policy = ctx.policy_config
+    registry = _load_registry()
 
     events = _read_events(actions_catalog)
     existing_keys = _existing_idempotency_keys(events)
@@ -738,47 +404,99 @@ def cmd_run_policy(args: argparse.Namespace) -> int:
             break
 
         processed += 1
-        result = _evaluate_policy(event, policy, actions_catalog, route_map)
 
-        if result.accepted:
-            new_event: Event = IntentAcceptedEvent(
-                event_id=uuid.uuid4(),
-                event_type="IntentAccepted",
-                schema_version=SCHEMA_VERSION,
-                timestamp=_now_utc(),
-                actor=Actor(type="service", id=ACTOR_POLICY),
-                correlation_id=event.correlation_id,
-                causation_id=event.event_id,
-                idempotency_key=_make_idempotency_key("policy.accept", event.event_id),
-                aggregate_id=event.aggregate_id,
-                payload=IntentAcceptedPayload(
-                    intent_event_id=event.event_id,
-                    rule_ids=result.rule_ids,
-                    summary="Intent passed deterministic policy checks",
-                ),
-            )
-            accepted_count += 1
-        else:
-            new_event = IntentRejectedEvent(
+        safe, sec_rule_ids, sec_reasons = _security_precheck(event, policy)
+        if not safe:
+            new_event: Event = IntentRejectedEvent(
                 event_id=uuid.uuid4(),
                 event_type="IntentRejected",
                 schema_version=SCHEMA_VERSION,
-                timestamp=_now_utc(),
+                module_id="kernel.security",
+                timestamp=now_utc(),
                 actor=Actor(type="service", id=ACTOR_POLICY),
                 correlation_id=event.correlation_id,
                 causation_id=event.event_id,
-                idempotency_key=_make_idempotency_key("policy.reject", event.event_id),
+                idempotency_key=make_idempotency_key("policy.reject.security", event.event_id),
                 aggregate_id=event.aggregate_id,
                 payload=IntentRejectedPayload(
                     intent_event_id=event.event_id,
-                    rule_ids=result.rule_ids,
-                    reasons=result.reasons,
-                    rejection_code="policy_denied",
+                    rule_ids=sec_rule_ids,
+                    reasons=sec_reasons,
+                    rejection_code="security_denied",
                 ),
             )
             rejected_count += 1
+        else:
+            decision_module_id: str | None = None
+            decision = None
+            for loaded in registry.all():
+                decision = loaded.plugin.policy(event, ctx)
+                if decision is not None:
+                    decision_module_id = loaded.manifest.module_id
+                    break
 
-        _, errors = validate_event(_event_json_dict(new_event), actions_catalog=actions_catalog)
+            if decision is None or decision_module_id is None:
+                decision = None
+                new_event = IntentRejectedEvent(
+                    event_id=uuid.uuid4(),
+                    event_type="IntentRejected",
+                    schema_version=SCHEMA_VERSION,
+                    module_id="kernel.router",
+                    timestamp=now_utc(),
+                    actor=Actor(type="service", id=ACTOR_POLICY),
+                    correlation_id=event.correlation_id,
+                    causation_id=event.event_id,
+                    idempotency_key=make_idempotency_key("policy.reject.nomodule", event.event_id),
+                    aggregate_id=event.aggregate_id,
+                    payload=IntentRejectedPayload(
+                        intent_event_id=event.event_id,
+                        rule_ids=["POL-NOMODULE"],
+                        reasons=[f"No module accepted intent '{event.payload.intent}'"],
+                        rejection_code="no_policy_module",
+                    ),
+                )
+                rejected_count += 1
+            elif decision.accepted:
+                new_event = IntentAcceptedEvent(
+                    event_id=uuid.uuid4(),
+                    event_type="IntentAccepted",
+                    schema_version=SCHEMA_VERSION,
+                    module_id=decision_module_id,
+                    timestamp=now_utc(),
+                    actor=Actor(type="service", id=ACTOR_POLICY),
+                    correlation_id=event.correlation_id,
+                    causation_id=event.event_id,
+                    idempotency_key=make_idempotency_key("policy.accept", event.event_id),
+                    aggregate_id=event.aggregate_id,
+                    payload=IntentAcceptedPayload(
+                        intent_event_id=event.event_id,
+                        rule_ids=decision.rule_ids,
+                        summary=decision.summary or "Intent accepted by module policy",
+                    ),
+                )
+                accepted_count += 1
+            else:
+                new_event = IntentRejectedEvent(
+                    event_id=uuid.uuid4(),
+                    event_type="IntentRejected",
+                    schema_version=SCHEMA_VERSION,
+                    module_id=decision_module_id,
+                    timestamp=now_utc(),
+                    actor=Actor(type="service", id=ACTOR_POLICY),
+                    correlation_id=event.correlation_id,
+                    causation_id=event.event_id,
+                    idempotency_key=make_idempotency_key("policy.reject", event.event_id),
+                    aggregate_id=event.aggregate_id,
+                    payload=IntentRejectedPayload(
+                        intent_event_id=event.event_id,
+                        rule_ids=decision.rule_ids,
+                        reasons=decision.reasons,
+                        rejection_code=decision.rejection_code,
+                    ),
+                )
+                rejected_count += 1
+
+        _, errors = validate_event(event_json_dict(new_event), actions_catalog=actions_catalog)
         if errors:
             print(json.dumps({"run": "policy", "error": "failed to build valid event", "details": errors}, ensure_ascii=True))
             return 1
@@ -787,7 +505,7 @@ def cmd_run_policy(args: argparse.Namespace) -> int:
             continue
 
         if args.dry_run:
-            print(json.dumps(_event_json_dict(new_event), ensure_ascii=True))
+            print(json.dumps(event_json_dict(new_event), ensure_ascii=True))
             emitted += 1
             continue
 
@@ -812,8 +530,9 @@ def cmd_run_policy(args: argparse.Namespace) -> int:
 
 
 def cmd_run_planner(args: argparse.Namespace) -> int:
-    actions_catalog = _load_actions_catalog()
-    routes = _route_map(_load_routes_catalog())
+    ctx = _build_module_context()
+    actions_catalog = ctx.actions_catalog
+    registry = _load_registry()
 
     events = _read_events(actions_catalog)
     existing_keys = _existing_idempotency_keys(events)
@@ -842,13 +561,17 @@ def cmd_run_planner(args: argparse.Namespace) -> int:
             skipped += 1
             continue
 
-        route = routes.get(intent_event.payload.intent)
-        if route is None:
+        if not event.module_id:
             skipped += 1
             continue
 
-        args_dict, arg_errors = _build_route_args(intent_event.payload, route)
-        if arg_errors:
+        loaded = registry.get(event.module_id)
+        if loaded is None:
+            skipped += 1
+            continue
+
+        proposal = loaded.plugin.plan(event, intent_event, ctx)
+        if proposal is None:
             skipped += 1
             continue
 
@@ -856,23 +579,24 @@ def cmd_run_planner(args: argparse.Namespace) -> int:
             event_id=uuid.uuid4(),
             event_type="ActionProposed",
             schema_version=SCHEMA_VERSION,
-            timestamp=_now_utc(),
+            module_id=event.module_id,
+            timestamp=now_utc(),
             actor=Actor(type="service", id=ACTOR_PLANNER),
             correlation_id=event.correlation_id,
             causation_id=event.event_id,
-            idempotency_key=_make_idempotency_key("planner.propose", event.event_id),
+            idempotency_key=make_idempotency_key("planner.propose", event.event_id),
             aggregate_id=event.aggregate_id,
             payload=ActionProposedPayload(
                 accepted_event_id=event.event_id,
-                action_id=route.action_id,
-                args=args_dict,
-                reason=route.reason,
-                dry_run=False,
-                preconditions=["intent accepted by policy worker"],
+                action_id=proposal.action_id,
+                args=proposal.args,
+                reason=proposal.reason,
+                dry_run=proposal.dry_run,
+                preconditions=proposal.preconditions,
             ),
         )
 
-        _, errors = validate_event(_event_json_dict(proposed_event), actions_catalog=actions_catalog)
+        _, errors = validate_event(event_json_dict(proposed_event), actions_catalog=actions_catalog)
         if errors:
             skipped += 1
             continue
@@ -881,7 +605,7 @@ def cmd_run_planner(args: argparse.Namespace) -> int:
             continue
 
         if args.dry_run:
-            print(json.dumps(_event_json_dict(proposed_event), ensure_ascii=True))
+            print(json.dumps(event_json_dict(proposed_event), ensure_ascii=True))
             emitted += 1
             continue
 
@@ -904,93 +628,11 @@ def cmd_run_planner(args: argparse.Namespace) -> int:
     return 0
 
 
-def _execute_allowlisted_action(action_id: str, args_dict: dict[str, Any]) -> tuple[str, str | None, str | None, str | None]:
-    digest = _make_hash({"action_id": action_id, "args": args_dict})[:16]
-
-    def _write_output(action: str, payload: dict[str, Any]) -> str:
-        OUTPUTS_PATH.mkdir(parents=True, exist_ok=True)
-        out_path = OUTPUTS_PATH / f"{action.replace('.', '_')}_{digest}.json"
-        out_path.write_text(
-            json.dumps(payload, ensure_ascii=True, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        return str(out_path)
-
-    if action_id in {"person.search.v1", "company.search.v1"}:
-        max_results = args_dict.get("max_results", 10)
-        details = f"deterministic search completed (max_results={max_results})"
-        output_ref = _write_output(
-            action_id,
-            {
-                "action_id": action_id,
-                "status": "executed",
-                "max_results": max_results,
-                "query": args_dict.get("query"),
-                "digest": digest,
-            },
-        )
-        return "executed", details, None, output_ref
-
-    if action_id == "document.extract.v1":
-        fields_count = len(args_dict.get("fields", []))
-        details = f"deterministic extraction completed (fields={fields_count})"
-        output_ref = _write_output(
-            action_id,
-            {
-                "action_id": action_id,
-                "status": "executed",
-                "document_ref": args_dict.get("document_ref"),
-                "fields": args_dict.get("fields", []),
-                "digest": digest,
-            },
-        )
-        return "executed", details, None, output_ref
-
-    if action_id == "record.classify.v1":
-        taxonomy = args_dict.get("taxonomy", "default")
-        details = f"deterministic classification completed (taxonomy={taxonomy})"
-        output_ref = _write_output(
-            action_id,
-            {
-                "action_id": action_id,
-                "status": "executed",
-                "record_ref": args_dict.get("record_ref"),
-                "taxonomy": taxonomy,
-                "digest": digest,
-            },
-        )
-        return "executed", details, None, output_ref
-
-    if action_id == "math.sum.v1":
-        expression = args_dict.get("expression")
-        if not isinstance(expression, str) or not expression.strip():
-            return "failed", None, "invalid_expression", None
-
-        # Deterministic numeric extraction: no eval, no arbitrary code path.
-        numbers = [float(match) for match in re.findall(r"[-+]?\d*\.?\d+", expression)]
-        if not numbers:
-            return "failed", None, "no_numbers_found", None
-
-        result = sum(numbers)
-        details = f"deterministic sum completed ({len(numbers)} terms)"
-        output_ref = _write_output(
-            action_id,
-            {
-                "action_id": action_id,
-                "status": "executed",
-                "expression": expression,
-                "numbers": numbers,
-                "result": result,
-                "digest": digest,
-            },
-        )
-        return "executed", details, None, output_ref
-
-    return "failed", None, "unsupported_action", None
-
-
 def cmd_run_executor(args: argparse.Namespace) -> int:
-    actions_catalog = _load_actions_catalog()
+    ctx = _build_module_context()
+    actions_catalog = ctx.actions_catalog
+    registry = _load_registry()
+
     events = _read_events(actions_catalog)
     existing_keys = _existing_idempotency_keys(events)
     by_id = _event_index(events)
@@ -1019,25 +661,50 @@ def cmd_run_executor(args: argparse.Namespace) -> int:
 
         accepted_event = by_id.get(event.payload.accepted_event_id)
         if not isinstance(accepted_event, IntentAcceptedEvent):
+            outcome_module_id = "kernel.executor"
             status = "failed"
             details = "proposal lineage invalid: accepted event not found"
             error_code = "invalid_lineage"
             output_ref = None
+        elif not event.module_id or accepted_event.module_id != event.module_id:
+            outcome_module_id = "kernel.executor"
+            status = "failed"
+            details = "proposal lineage invalid: module mismatch"
+            error_code = "invalid_module_lineage"
+            output_ref = None
         else:
-            status, details, error_code, output_ref = _execute_allowlisted_action(
-                event.payload.action_id,
-                event.payload.args,
-            )
+            loaded = registry.get(event.module_id)
+            if loaded is None:
+                outcome_module_id = "kernel.executor"
+                status = "failed"
+                details = f"module '{event.module_id}' is not loaded"
+                error_code = "module_not_loaded"
+                output_ref = None
+            else:
+                exec_result = loaded.plugin.execute(event, ctx)
+                if exec_result is None:
+                    outcome_module_id = "kernel.executor"
+                    status = "failed"
+                    details = f"module '{event.module_id}' could not execute action '{event.payload.action_id}'"
+                    error_code = "unsupported_action"
+                    output_ref = None
+                else:
+                    outcome_module_id = event.module_id
+                    status = exec_result.status
+                    details = exec_result.details
+                    error_code = exec_result.error_code
+                    output_ref = exec_result.output_ref
 
         outcome_event = ActionOutcomeEvent(
             event_id=uuid.uuid4(),
             event_type="ActionOutcome",
             schema_version=SCHEMA_VERSION,
-            timestamp=_now_utc(),
+            module_id=outcome_module_id,
+            timestamp=now_utc(),
             actor=Actor(type="service", id=ACTOR_EXECUTOR),
             correlation_id=event.correlation_id,
             causation_id=event.event_id,
-            idempotency_key=_make_idempotency_key("executor.outcome", event.event_id),
+            idempotency_key=make_idempotency_key("executor.outcome", event.event_id),
             aggregate_id=event.aggregate_id,
             payload=ActionOutcomePayload(
                 proposal_event_id=event.event_id,
@@ -1050,7 +717,7 @@ def cmd_run_executor(args: argparse.Namespace) -> int:
             ),
         )
 
-        _, errors = validate_event(_event_json_dict(outcome_event), actions_catalog=actions_catalog)
+        _, errors = validate_event(event_json_dict(outcome_event), actions_catalog=actions_catalog)
         if errors:
             skipped += 1
             continue
@@ -1059,7 +726,7 @@ def cmd_run_executor(args: argparse.Namespace) -> int:
             continue
 
         if args.dry_run:
-            print(json.dumps(_event_json_dict(outcome_event), ensure_ascii=True))
+            print(json.dumps(event_json_dict(outcome_event), ensure_ascii=True))
             emitted += 1
             continue
 
@@ -1085,7 +752,7 @@ def cmd_run_executor(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Deterministic event pipeline. Ingress: new-intent. "
+            "Deterministic modular event pipeline. Ingress: new-intent. "
             "Workers: run-policy, run-planner, run-executor."
         )
     )
@@ -1094,6 +761,9 @@ def build_parser() -> argparse.ArgumentParser:
     validate = sub.add_parser("validate", help="Validate an event JSON file")
     validate.add_argument("event", help="Path to event JSON file")
     validate.set_defaults(func=cmd_validate)
+
+    list_modules = sub.add_parser("list-modules", help="List loaded policy/planner/executor modules")
+    list_modules.set_defaults(func=cmd_list_modules)
 
     new_intent = sub.add_parser(
         "new-intent",
@@ -1107,7 +777,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_policy = sub.add_parser(
         "run-policy",
-        help="Deterministic policy worker: emit IntentAccepted/IntentRejected",
+        help="Deterministic policy worker: module-aware IntentAccepted/IntentRejected",
     )
     run_policy.add_argument("--limit", type=int, default=0)
     run_policy.add_argument("--dry-run", action="store_true")
@@ -1115,7 +785,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_planner = sub.add_parser(
         "run-planner",
-        help="Deterministic planner worker: emit ActionProposed from accepted intents",
+        help="Deterministic planner worker: module-aware ActionProposed",
     )
     run_planner.add_argument("--limit", type=int, default=0)
     run_planner.add_argument("--dry-run", action="store_true")
@@ -1123,7 +793,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_executor = sub.add_parser(
         "run-executor",
-        help="Deterministic executor worker: emit ActionOutcome from proposed actions",
+        help="Deterministic executor worker: module-aware ActionOutcome",
     )
     run_executor.add_argument("--limit", type=int, default=0)
     run_executor.add_argument("--dry-run", action="store_true")
