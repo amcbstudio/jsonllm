@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "allowed_intents": [
+    "person_search",
+    "company_search",
+    "document_extraction",
+    "classification"
+  ],
+  "blocked_request_terms": [
+    "password",
+    "private key",
+    "secret",
+    "api key",
+    "token"
+  ],
+  "max_requested_outputs": 8,
+  "require_route": true
+}

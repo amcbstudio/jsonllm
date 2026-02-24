@@ -1,0 +1,13 @@
+module_id = "core_builtin"
+module_api_version = 1
+name = "Core Builtin Module"
+version = "1.0.0"
+priority = 100
+enabled = true
+intents = ["person_search", "company_search", "document_extraction", "classification"]
+actions = ["person.search.v1", "company.search.v1", "document.extract.v1", "record.classify.v1"]
+permissions = ["filesystem:data/outputs"]
+
+[entrypoint]
+module_file = "module.py"
+class_name = "CoreBuiltinModule"

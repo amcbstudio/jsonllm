@@ -1,0 +1,13 @@
+module_id = "math_sum"
+module_api_version = 1
+name = "Math Sum Module"
+version = "1.0.0"
+priority = 50
+enabled = true
+intents = ["calculation"]
+actions = ["math.sum.v1"]
+permissions = ["filesystem:data/outputs"]
+
+[entrypoint]
+module_file = "module.py"
+class_name = "MathSumModule"

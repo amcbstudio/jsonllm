@@ -22,7 +22,16 @@ jsonllm = "event_pipeline:main"
 [tool.setuptools]
 package-dir = {"" = "src"}
 py-modules = ["event_pipeline"]
+include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["jsonllm_kernel*"]
+
+[tool.setuptools.package-data]
+jsonllm_kernel = [
+  "templates/*",
+  "templates/catalog/*",
+  "templates/modules/*",
+  "templates/modules/*/*",
+]

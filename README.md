@@ -26,6 +26,8 @@ Deterministic event-sourced kernel for modular LLM automation.
 - `src/jsonllm_kernel/module_loader.py`: `module.toml` loader/validator
 - `src/jsonllm_kernel/scaffold.py`: module scaffolding templates
 - `src/jsonllm_kernel/conformance.py`: module conformance suite
+- `src/jsonllm_kernel/project_init.py`: workspace bootstrap from packaged templates
+- `src/jsonllm_kernel/templates/`: packaged default catalog and modules
 - `modules/`: example modules
 - `catalog/`: allowlist + security configs
 
@@ -43,16 +45,32 @@ python3 -m pip install -e .
 jsonllm --help
 ```
 
+## Start in a brand-new directory
+
+```bash
+mkdir /tmp/my-jsonllm-workspace
+jsonllm init-project /tmp/my-jsonllm-workspace
+jsonllm --workspace /tmp/my-jsonllm-workspace list-modules
+```
+
+`--workspace` (or env `JSONLLM_WORKSPACE`) controls where `catalog/`, `modules/`, and `data/` are read/written.
+
 ## CLI
 
 ```bash
-python3 src/event_pipeline.py list-modules
-python3 src/event_pipeline.py init-module my_domain
-python3 src/event_pipeline.py test-module --module-id my_domain
-python3 src/event_pipeline.py new-intent --request-text "..." --aggregate-id req-1
-python3 src/event_pipeline.py run-policy
-python3 src/event_pipeline.py run-planner
-python3 src/event_pipeline.py run-executor
+jsonllm --workspace /path/to/workspace list-modules
+jsonllm --workspace /path/to/workspace init-module my_domain
+jsonllm --workspace /path/to/workspace test-module --module-id my_domain
+jsonllm --workspace /path/to/workspace new-intent --request-text "..." --aggregate-id req-1
+jsonllm --workspace /path/to/workspace run-policy
+jsonllm --workspace /path/to/workspace run-planner
+jsonllm --workspace /path/to/workspace run-executor
+```
+
+Equivalent while developing in this repo:
+
+```bash
+python3 src/event_pipeline.py --workspace . list-modules
 ```
 
 ## Module self-serve workflow
@@ -60,7 +78,7 @@ python3 src/event_pipeline.py run-executor
 1. Scaffold module:
 
 ```bash
-python3 src/event_pipeline.py init-module my_domain
+jsonllm --workspace /path/to/workspace init-module my_domain
 ```
 
 2. Implement `policy/plan/execute` in `modules/my_domain/module.py`.
@@ -69,7 +87,7 @@ python3 src/event_pipeline.py init-module my_domain
 5. Run conformance:
 
 ```bash
-python3 src/event_pipeline.py test-module --module-id my_domain
+jsonllm --workspace /path/to/workspace test-module --module-id my_domain
 ```
 
 6. Run end-to-end pipeline.
