@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jsonllm-kernel"
-version = "0.1.0"
+version = "0.1.1"
 description = "Deterministic event-sourced kernel for modular LLM automation"
 readme = "README.md"
 requires-python = ">=3.11"
